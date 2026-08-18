@@ -20,6 +20,7 @@ import org.mtr.core.operation.ArrivalResponse;
 import org.mtr.core.tool.Utilities;
 import org.mtr.data.ArrivalsCacheClient;
 import org.mtr.data.IGui;
+import org.mtr.data.VehicleExtension;
 import org.mtr.font.FontRenderHelper;
 import org.mtr.font.FontRenderOptions;
 import org.mtr.generated.lang.TranslationProvider;
@@ -83,7 +84,70 @@ public class RenderPIDS<T extends BlockPIDSBase.BlockEntityBase> extends BlockEn
 		FontRenderHelper.render(matrixStack, text, FontRenderOptions.builder().offsetX(x).offsetY(y).color(color).build());
 	}
 
-	public String getArrivalString(long arrival, boolean isRealtime, boolean isCjk) {
+	public String getArrivalString(ArrivalResponse arrivalResponse, boolean isCjk) {
+		final long arrival = (arrivalResponse.getArrival() - ArrivalsCacheClient.INSTANCE.getMillisOffset() - System.currentTimeMillis()) / 1000;
+		final long departure = (arrivalResponse.getDeparture() - ArrivalsCacheClient.INSTANCE.getMillisOffset() - System.currentTimeMillis()) / 1000;
+		final boolean isRealtime = arrivalResponse.getRealtime();
+
+		final SimplifiedRoute simplifiedRoute = MinecraftClientData.getInstance().simplifiedRouteIdMap.get(arrivalResponse.getRouteId());
+		if (simplifiedRoute != null) {
+			final int platformIndex = simplifiedRoute.getPlatformIndex(arrivalResponse.getPlatformId());
+			if (platformIndex == 0 && departure > 0) {
+				final long departureTimeMs = arrivalResponse.getDeparture() - ArrivalsCacheClient.INSTANCE.getMillisOffset();
+				final java.time.Instant instant = java.time.Instant.ofEpochMilli(departureTimeMs);
+				final java.time.ZonedDateTime zonedDateTime = instant.atZone(java.time.ZoneId.systemDefault());
+				final String formattedTime = String.format("%02d:%02d", zonedDateTime.getHour(), zonedDateTime.getMinute());
+				return formattedTime + (isCjk ? " 출발" : " Dep");
+			}
+		}
+
+		if (arrival <= 0 && departure > 0) {
+			return isCjk ? "대기" : "Waiting";
+		}
+
+		if (departure <= 0) {
+			return isCjk ? "출발" : "Departing";
+		}
+
+		if (arrival <= 15) {
+			return isCjk ? "도착" : "Arriving";
+		}
+
+		if (arrival <= 45) {
+			return isCjk ? "접근" : "Approaching";
+		}
+
+		if (simplifiedRoute != null) {
+			final int platformIndex = simplifiedRoute.getPlatformIndex(arrivalResponse.getPlatformId());
+			if (platformIndex > 0) {
+				VehicleExtension nearestVehicle = null;
+				int minStationsAgo = Integer.MAX_VALUE;
+
+				for (final VehicleExtension vehicle : MinecraftClientData.getInstance().vehicles) {
+					if (vehicle.getIsOnRoute() && vehicle.vehicleExtraData.getThisRouteId() == arrivalResponse.getRouteId()) {
+						final int stopIndex = vehicle.vehicleExtraData.getStopIndex();
+						if (stopIndex < platformIndex) {
+							final int stationsAgo = platformIndex - stopIndex;
+							if (stationsAgo < minStationsAgo) {
+								minStationsAgo = stationsAgo;
+								nearestVehicle = vehicle;
+							}
+						}
+					}
+				}
+
+				if (nearestVehicle != null && minStationsAgo != Integer.MAX_VALUE) {
+					if (minStationsAgo == 1) {
+						return isCjk ? "전역" : "Prev. Station";
+					} else if (minStationsAgo == 2) {
+						return isCjk ? "전전역" : "2 stations ago";
+					} else {
+						return minStationsAgo + (isCjk ? "전역" : " stations ago");
+					}
+				}
+			}
+		}
+
 		if (arrival >= 60) {
 			return (isRealtime ? "" : "*") + (isCjk ? TranslationProvider.GUI_MTR_ARRIVAL_MIN_CJK : TranslationProvider.GUI_MTR_ARRIVAL_MIN).getString(arrival / 60);
 		} else if (arrival > 0) {
@@ -191,7 +255,7 @@ public class RenderPIDS<T extends BlockPIDSBase.BlockEntityBase> extends BlockEn
 				};
 
 				final String carLengthString = (isCjk ? TranslationProvider.GUI_MTR_ARRIVAL_CAR_CJK : TranslationProvider.GUI_MTR_ARRIVAL_CAR).getString(arrivalResponse.getCarCount());
-				final String arrivalString = getArrivalString(arrival, arrivalResponse.getRealtime(), isCjk);
+				final String arrivalString = getArrivalString(arrivalResponse, isCjk);
 
 				if (isSingleArrival) {
 					if (i == 0) {
